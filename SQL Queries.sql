@@ -1,4 +1,4 @@
-Queries · SQL
+SQL Queries
 -- =====================================================
 -- Walmart Sales Analysis — SQL Queries
 -- Business Question: How do fuel prices, CPI, and unemployment
