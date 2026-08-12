@@ -1,0 +1,160 @@
+Queries · SQL
+-- =====================================================
+-- Walmart Sales Analysis — SQL Queries
+-- Business Question: How do fuel prices, CPI, and unemployment
+-- relate to Walmart's weekly sales, and does that relationship
+-- hold consistently across stores?
+-- =====================================================
+ 
+ 
+-- =====================================================
+-- QUERY 1: BASELINE
+-- What's the average weekly sales across all stores, and what's
+-- the range (min/max) between the highest- and lowest-performing stores?
+-- =====================================================
+ 
+-- Overall average weekly sales across all stores
+SELECT AVG(weekly_sales)
+FROM walmart_sales;
+ 
+-- Range between lowest and highest performing store (by store average)
+WITH avgweekly_sales AS (
+SELECT store, AVG(Weekly_Sales) AS avg_sales
+FROM walmart_sales
+GROUP BY store)
+SELECT MIN(avg_sales), MAX(avg_sales)
+FROM avgweekly_sales;
+ 
+ 
+-- =====================================================
+-- QUERY 2: FUEL PRICE RELATIONSHIP
+-- Does weekly sales move with fuel price?
+-- =====================================================
+ 
+-- Overall average fuel price across the dataset
+SELECT AVG(fuel_price)
+FROM walmart_sales;
+ 
+-- Store-level average sales vs. average fuel price, side by side
+WITH avgweekly_sales AS (
+SELECT store, AVG(Weekly_Sales) AS avg_sales, AVG(fuel_price) AS avgfuel_price
+FROM walmart_sales
+GROUP BY store)
+SELECT avg_sales, avgfuel_price, store
+FROM avgweekly_sales
+ORDER BY avgfuel_price DESC;
+ 
+-- Note: MySQL does not natively support correlation functions (e.g., COVAR_POP, CORR)
+-- available in PostgreSQL. The query below was attempted but is not supported in this
+-- MySQL version. The correlation coefficient (0.07) was calculated in Python instead,
+-- using pandas' .corr() function on this query's exported output.
+--
+-- WITH avgweekly_sales AS (
+-- SELECT store, AVG(Weekly_Sales) AS avg_sales, AVG(fuel_price) AS avgfuel_price
+-- FROM walmart_sales
+-- GROUP BY store)
+-- SELECT COVAR_POP(avg_sales, avgfuel_price) / (STDDEV_POP(avg_sales) * STDDEV_POP(avgfuel_price)) AS correlation
+-- FROM avgweekly_sales;
+ 
+ 
+-- =====================================================
+-- QUERY 3: CPI RELATIONSHIP
+-- Segment CPI into bands (low/medium/high) and compare average sales across bands.
+-- =====================================================
+ 
+-- Overall average CPI across the dataset
+SELECT AVG(CPI)
+FROM walmart_sales;
+ 
+-- Range of average CPI by store (lowest/highest)
+WITH avgweekly_sales AS (
+	SELECT store, AVG(CPI) AS avg_cpi
+    FROM walmart_sales
+    GROUP BY store)
+SELECT MIN(avg_cpi), MAX(avg_cpi)
+FROM avgweekly_sales;
+ 
+-- CPI segmented into Low / Mid / High bands, compared against average weekly sales
+SELECT store, AVG(CPI), AVG(weekly_sales),
+	CASE WHEN AVG(CPI) BETWEEN 128 AND 158 THEN 'LOW CPI'
+		 WHEN AVG(CPI) BETWEEN 158 AND 188 THEN 'MID CPI'
+         WHEN AVG(CPI) BETWEEN 188 AND 220 THEN 'HIGH CPI'
+    END AS CPI_LEVELS
+FROM walmart_sales
+GROUP BY store
+ORDER BY AVG(weekly_sales) DESC;
+ 
+-- Note: Correlation coefficient (-0.08) was calculated in Python (pandas .corr()),
+-- for the same reason noted in Query 2 — MySQL does not support COVAR_POP/CORR.
+ 
+ 
+-- =====================================================
+-- QUERY 4: UNEMPLOYMENT RELATIONSHIP
+-- Does higher unemployment correlate with lower sales?
+-- =====================================================
+ 
+-- Overall average unemployment rate across the dataset
+SELECT AVG(unemployment)
+FROM walmart_sales;
+ 
+-- Store-level average sales vs. average unemployment, side by side
+WITH avgweekly_sales AS(
+	SELECT AVG(unemployment) AS avgunemploy, store, AVG(weekly_sales) AS avg_sales
+    FROM walmart_sales
+    GROUP BY store)
+SELECT avgunemploy, avg_sales, store
+FROM avgweekly_sales;
+ 
+-- Note: Correlation coefficient (-0.11) was calculated in Python (pandas .corr()),
+-- for the same reason noted in Query 2.
+ 
+ 
+-- =====================================================
+-- QUERY 5: STORE-LEVEL SALES VOLATILITY
+-- Which stores are most volatile in weekly sales?
+-- =====================================================
+ 
+-- Version 1: Fixed-cutoff bucketing (Low / Normal / High variation by std dev)
+SELECT AVG(weekly_sales), store,
+	CASE WHEN STDDEV(WEEKLY_SALES) < 100000 THEN 'LOW VARIATION'
+		 WHEN STDDEV(WEEKLY_SALES) BETWEEN 100000 AND 200000 THEN 'NORMAL VARIATION'
+         WHEN STDDEV(WEEKLY_SALES) > 200000 THEN 'HIGH VARIATION'
+         END AS Sales_variation
+FROM walmart_sales
+GROUP BY store;
+ 
+-- Count of stores in each variation bucket
+WITH store_variation AS (
+SELECT AVG(weekly_sales), store,
+	CASE WHEN STDDEV(WEEKLY_SALES) < 100000 THEN 'LOW VARIATION'
+		 WHEN STDDEV(WEEKLY_SALES) BETWEEN 100000 AND 200000 THEN 'NORMAL VARIATION'
+         WHEN STDDEV(WEEKLY_SALES) > 200000 THEN 'HIGH VARIATION'
+         END AS Sales_variation
+FROM walmart_sales
+GROUP BY store)
+SELECT COUNT(*), sales_variation
+FROM store_variation
+GROUP BY sales_variation;
+ 
+-- Version 2: Refined bucketing using z-scores (how many standard deviations
+-- a store's volatility sits from the average volatility across all stores)
+WITH store_stddev AS (
+SELECT store, AVG(weekly_sales) AS avg_sales, STDDEV(weekly_sales) AS stddev_val
+FROM walmart_sales
+GROUP BY store),
+ 
+z_scores AS (
+SELECT store, avg_sales, stddev_val,
+    AVG(stddev_val) OVER () AS overall_avg_stddev,
+    STDDEV(stddev_val) OVER () AS overall_stddev_of_stddev,
+    (stddev_val - AVG(stddev_val) OVER ()) / STDDEV(stddev_val) OVER () AS z_score
+FROM store_stddev)
+ 
+SELECT store, avg_sales, stddev_val, z_score,
+    CASE WHEN z_score > 2 OR z_score < -2 THEN 'HIGH VOLATILITY'
+         WHEN z_score BETWEEN -2 AND -1 OR z_score BETWEEN 1 AND 2 THEN 'MODERATE VOLATILITY'
+         ELSE 'TYPICAL VOLATILITY'
+    END AS volatility_tier
+FROM z_scores
+ORDER BY avg_sales DESC;
+
